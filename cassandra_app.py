@@ -431,6 +431,63 @@ def add_comment(post_id):
 
     return redirect(url_for('index'))
 
+@app.route('/delete_post/<uuid:post_id>')
+def delete_post(post_id):
+    # Check if the user is logged in
+    if 'user_id' not in session:
+        flash("Please login to continue", "error")
+        return redirect(url_for('login'))
+
+    session_cass, cluster = get_cassandra_session()
+    if not session_cass:
+        flash("Database connection failed", "error")
+        return redirect(url_for('profile'))
+
+    try:
+        # Convert user in session to UUID
+        user_uuid = uuid.UUID(session['user_id'])
+
+        # Verify post exists and belongs to the user
+        post = session_cass.execute(
+            "SELECT * FROM user_posts WHERE user_id = %s AND post_id = %s",
+            (user_uuid, post_id)
+        ).one()
+
+        if not post:
+            flash("You are not allowed to delete this post", "error")
+            return redirect(url_for('profile'))
+
+        # Delete from main posts table (if you have it)
+        session_cass.execute(
+            "DELETE FROM posts WHERE post_id = %s",
+            (post_id,)
+        )
+
+        # Delete from user_posts
+        session_cass.execute(
+            "DELETE FROM user_posts WHERE user_id = %s AND post_id = %s",
+            (user_uuid, post_id)
+        )
+
+        # Delete related likes
+        session_cass.execute(
+            "DELETE FROM likes WHERE post_id = %s",
+            (post_id,)
+        )
+
+        # Delete related comments
+        session_cass.execute(
+            "DELETE FROM comments WHERE post_id = %s",
+            (post_id,)
+        )
+
+        flash("Post deleted successfully!", "success")
+        return redirect(url_for('profile'))
+
+    except Exception as e:
+        flash(f"Error deleting post: {e}", "error")
+        return redirect(url_for('profile'))
+
 
 @app.route('/profile')
 def profile():
@@ -484,7 +541,7 @@ def profile():
                 'comments_count': comments_count
             })
 
-        return render_template('cassandra_profile.html', user=user, posts=posts_list)
+        return render_template('profile.html', user=user, posts=posts_list)
 
     except Exception as e:
         flash(f"Error: {e}", "error")
